@@ -1,0 +1,6 @@
+{
+  "name": "PayTrack",
+  "description": "Smart Expense Tracker for Couples, Families & Friends. Track personal budgets, create shared pods, split bills, and generate financial reports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
