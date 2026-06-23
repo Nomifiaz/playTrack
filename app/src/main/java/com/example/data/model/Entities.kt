@@ -64,7 +64,8 @@ data class Bill(
     val recurrence: String = "Monthly", // "One-time", "Weekly", "Monthly", "Custom"
     val category: String = "Bills",
     val isPaid: Boolean = false,
-    val paidAt: Long? = null
+    val paidAt: Long? = null,
+    val remoteId: String? = null
 )
 
 @Entity(tableName = "budgets")
@@ -74,5 +75,9 @@ data class Budget(
     val podId: Int? = null, // null for personal category budgets
     val category: String = "Overall", // "Overall" or category name
     val limitAmount: Double,
-    val thresholdPercent: Int = 80 // alert when remaining budget drops below (100 - thresholdPercent)%
+    val thresholdPercent: Int = 80, // alert when remaining budget drops below (100 - thresholdPercent)%
+    val spentAmount: Double = 0.0,
+    val remainingAmount: Double = 0.0,
+    val percentSpent: Double = 0.0,
+    val isOverspent: Boolean = false
 )

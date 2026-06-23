@@ -6,6 +6,7 @@ import com.example.data.model.*
 import com.example.data.api.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.firstOrNull
+import okhttp3.MultipartBody
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -104,9 +105,9 @@ class AppRepository(
     suspend fun seedDatabase() {
         val currentUsers = allUsers.firstOrNull()
         if (currentUsers.isNullOrEmpty()) {
-            Log.d("AppRepository", "Seeding database with default mock data...")
+            Log.d("AppRepository", "Seeding database with primary user placeholder only...")
 
-            // 1. Create Default Users
+            // 1. Create Default Users (Only Primary User, no dummy transactional data)
             val primaryId = userProfileDao.insertUser(
                 UserProfile(
                     name = "Richie Jimenez",
@@ -118,202 +119,6 @@ class AppRepository(
                     isPrimary = true
                 )
             ).toInt()
-
-            val ahmedId = userProfileDao.insertUser(
-                UserProfile(name = "Ahmed Al-Farsi", email = "ahmed.f@example.com", avatarName = "Ahmed")
-            ).toInt()
-
-            val daisieId = userProfileDao.insertUser(
-                UserProfile(name = "Daisie Wright", email = "daisie.w@example.com", avatarName = "Daisie")
-            ).toInt()
-
-            val bilalId = userProfileDao.insertUser(
-                UserProfile(name = "Bilal Khan", email = "bilal.k@example.com", avatarName = "Bilal")
-            ).toInt()
-
-            // Retrieve populated instances
-            val richie = userProfileDao.getUserById(primaryId) ?: return
-            val ahmed = userProfileDao.getUserById(ahmedId) ?: return
-            val daisie = userProfileDao.getUserById(daisieId) ?: return
-            val bilal = userProfileDao.getUserById(bilalId) ?: return
-
-            // 2. Add Personal Transactions (exactly from the reference design image!)
-            val now = System.currentTimeMillis()
-            transactionDao.insertTransaction(
-                Transaction(
-                    userId = primaryId,
-                    type = "EXPENSE",
-                    amount = 21.00,
-                    category = "Transport",
-                    date = now - 1000 * 60 * 15, // 15 mins ago
-                    paymentMethod = "Card",
-                    note = "Uber - ride back from meeting",
-                    paidByUserId = primaryId
-                )
-            )
-
-            transactionDao.insertTransaction(
-                Transaction(
-                    userId = primaryId,
-                    type = "INCOME",
-                    amount = 14.00,
-                    category = "Refund",
-                    date = now - 1000 * 60 * 60 * 5, // 5 hours ago
-                    paymentMethod = "Wallet",
-                    note = "Apple Subscription refund (error charge)",
-                    paidByUserId = primaryId
-                )
-            )
-
-            transactionDao.insertTransaction(
-                Transaction(
-                    userId = primaryId,
-                    type = "EXPENSE",
-                    amount = 100.00,
-                    category = "Groceries",
-                    date = now - 1000 * 60 * 60 * 24, // Yesterday
-                    paymentMethod = "Card",
-                    note = "Weekly groceries at Trader Joe's",
-                    paidByUserId = primaryId
-                )
-            )
-
-            transactionDao.insertTransaction(
-                Transaction(
-                    userId = primaryId,
-                    type = "EXPENSE",
-                    amount = 12.50,
-                    category = "Food",
-                    date = now - 1000 * 60 * 60 * 36, // 1.5 days ago
-                    paymentMethod = "Cash",
-                    note = "Fresh Brewed Coffee & Pastry",
-                    paidByUserId = primaryId
-                )
-            )
-
-            // 3. Create Collaborative Pods
-            val pod1Id = podDao.insertPod(
-                Pod(
-                    name = "Roommates Flat 4B",
-                    description = "Splits for rent, electricity, Wi-Fi router, and weekly utilities.",
-                    creatorId = primaryId,
-                    inviteCode = "FLAT4B",
-                    budgetAmount = 2000.00
-                )
-            ).toInt()
-
-            // Populate Pod 1 members
-            podDao.insertPodMember(PodMember(podId = pod1Id, userId = primaryId, userName = richie.name, avatarName = "Richie"))
-            podDao.insertPodMember(PodMember(podId = pod1Id, userId = ahmedId, userName = ahmed.name, avatarName = "Ahmed"))
-            podDao.insertPodMember(PodMember(podId = pod1Id, userId = daisieId, userName = daisie.name, avatarName = "Daisie"))
-            podDao.insertPodMember(PodMember(podId = pod1Id, userId = bilalId, userName = bilal.name, avatarName = "Bilal"))
-
-            // Seed Group Shared Expense (Ahmed paid 1200.00 rent, Richie owes 300.00, and wifi internet router)
-            transactionDao.insertTransaction(
-                Transaction(
-                    userId = ahmedId,
-                    podId = pod1Id,
-                    type = "EXPENSE",
-                    amount = 1200.00,
-                    category = "Rent",
-                    date = now - 1000 * 60 * 60 * 48, // 2 days ago
-                    paymentMethod = "Bank",
-                    note = "Monthly Rent 4B flat",
-                    paidByUserId = ahmedId,
-                    splitMethod = "EQUAL",
-                    splitDetails = "1:300.0,2:300.0,3:300.0,4:300.0"
-                )
-            )
-
-            transactionDao.insertTransaction(
-                Transaction(
-                    userId = primaryId,
-                    podId = pod1Id,
-                    type = "EXPENSE",
-                    amount = 80.00,
-                    category = "Bills",
-                    date = now - 1000 * 60 * 60 * 24 * 3, // 3 days ago
-                    paymentMethod = "Card",
-                    note = "Wi-Fi Router Router Bill",
-                    paidByUserId = primaryId,
-                    splitMethod = "EQUAL",
-                    splitDetails = "1:20.0,2:20.0,3:20.0,4:20.0"
-                )
-            )
-
-            val pod2Id = podDao.insertPod(
-                Pod(
-                    name = "Goa Trip 2026",
-                    description = "Joint trip with Daisie & Bilal: flights, beach snacks, and travel.",
-                    creatorId = primaryId,
-                    inviteCode = "GOASUMMER",
-                    budgetAmount = 800.00
-                )
-            ).toInt()
-
-            // Populate Pod 2 members
-            podDao.insertPodMember(PodMember(podId = pod2Id, userId = primaryId, userName = richie.name, avatarName = "Richie"))
-            podDao.insertPodMember(PodMember(podId = pod2Id, userId = daisieId, userName = daisie.name, avatarName = "Daisie"))
-            podDao.insertPodMember(PodMember(podId = pod2Id, userId = bilalId, userName = bilal.name, avatarName = "Bilal"))
-
-            transactionDao.insertTransaction(
-                Transaction(
-                    userId = daisieId,
-                    podId = pod2Id,
-                    type = "EXPENSE",
-                    amount = 180.00,
-                    category = "Transport",
-                    date = now - 1000 * 60 * 60 * 72,
-                    paymentMethod = "Card",
-                    note = "Jet Ski Ride and Beach boards",
-                    paidByUserId = daisieId,
-                    splitMethod = "EQUAL",
-                    splitDetails = "1:60.0,3:60.0,4:60.0"
-                )
-            )
-
-            // 4. Create bills & reminders
-            billDao.insertBill(
-                Bill(
-                    userId = primaryId,
-                    name = "Room rent subscription",
-                    amount = 450.00,
-                    dueDate = now - 1000 * 60 * 60 * 12, // OVERDUE 12 hours
-                    recurrence = "Monthly",
-                    category = "Rent",
-                    isPaid = false
-                )
-            )
-
-            billDao.insertBill(
-                Bill(
-                    userId = primaryId,
-                    name = "High-speed Internet",
-                    amount = 49.99,
-                    dueDate = now + 1000 * 60 * 60 * 24 * 3, // Due in 3 days
-                    recurrence = "Monthly",
-                    category = "Bills",
-                    isPaid = false
-                )
-            )
-
-            billDao.insertBill(
-                Bill(
-                    userId = primaryId,
-                    name = "AWS Server Cloud Cloud",
-                    amount = 12.50,
-                    dueDate = now + 1000 * 60 * 60 * 24 * 7, // Due in 7 days
-                    recurrence = "Monthly",
-                    category = "Other",
-                    isPaid = false
-                )
-            )
-
-            // 5. Create budgets
-            budgetDao.insertBudget(Budget(userId = primaryId, category = "Overall", limitAmount = 2500.00))
-            budgetDao.insertBudget(Budget(userId = primaryId, category = "Food", limitAmount = 400.00))
-            budgetDao.insertBudget(Budget(userId = primaryId, category = "Bills", limitAmount = 600.00))
-            budgetDao.insertBudget(Budget(userId = primaryId, category = "Groceries", limitAmount = 500.00))
         }
     }
 
@@ -377,7 +182,7 @@ class AppRepository(
             if (response.success && response.data != null) {
                 transactionDao.clearAllTransactions()
                 response.data.forEach { feedTx ->
-                    val localPodId = feedTx.pod?.hashCode()?.let { it and 0x7FFFFFFF }
+                    val localPodId = feedTx.pod?._id?.hashCode()?.let { it and 0x7FFFFFFF }
                     val tx = Transaction(
                         id = feedTx._id.hashCode() and 0x7FFFFFFF,
                         userId = if (feedTx.user?._id == sessionManager.userId) 1 else (feedTx.user?._id?.hashCode()?.let { it and 0x7FFFFFFF } ?: 2),
@@ -416,7 +221,11 @@ class AppRepository(
                         userId = 1,
                         category = budgetData.category,
                         limitAmount = budgetData.limitAmount,
-                        thresholdPercent = budgetData.lowBalanceThresholdPercent
+                        thresholdPercent = budgetData.lowBalanceThresholdPercent,
+                        spentAmount = budgetData.spentAmount,
+                        remainingAmount = budgetData.remainingAmount,
+                        percentSpent = budgetData.percentSpent,
+                        isOverspent = budgetData.isOverspent
                     )
                     budgetDao.insertBudget(b)
                 }
@@ -444,6 +253,11 @@ class AppRepository(
             syncProfile()
         }
         return response
+    }
+
+    suspend fun apiFetchNotifications(): NotificationsListResponse {
+        val token = sessionManager.token ?: return NotificationsListResponse(success = false, count = 0, data = emptyList())
+        return PayTrackApiClient.apiService.getNotifications(getAuthHeader())
     }
 
     fun getRemotePodId(pod: Pod): String? {
@@ -509,6 +323,21 @@ class AppRepository(
         return response
     }
 
+    suspend fun apiGetPodBalances(pod: Pod): PodBalancesResponse {
+        val remoteId = getRemotePodId(pod) ?: return PodBalancesResponse(success = false, balances = emptyList())
+        return PayTrackApiClient.apiService.getPodBalances(getAuthHeader(), remoteId)
+    }
+
+    suspend fun apiSettlePodDebt(pod: Pod, request: PodSettleRequest): PodSettleResponse {
+        val remoteId = getRemotePodId(pod) ?: return PodSettleResponse(success = false, message = "Local-only pod")
+        return PayTrackApiClient.apiService.settlePodDebt(getAuthHeader(), remoteId, request)
+    }
+
+    suspend fun apiGetPodActivity(pod: Pod): PodActivityResponse {
+        val remoteId = getRemotePodId(pod) ?: return PodActivityResponse(success = false, count = 0, data = emptyList())
+        return PayTrackApiClient.apiService.getPodActivity(getAuthHeader(), remoteId)
+    }
+
     suspend fun apiCreateTransaction(request: TransactionCreateRequest): TransactionCreateResponse {
         val response = PayTrackApiClient.apiService.createTransaction(getAuthHeader(), request)
         if (response.success) {
@@ -516,6 +345,10 @@ class AppRepository(
             syncBudgets()
         }
         return response
+    }
+
+    suspend fun apiUploadReceipt(receipt: MultipartBody.Part): ReceiptUploadResponse {
+        return PayTrackApiClient.apiService.uploadReceipt(getAuthHeader(), receipt)
     }
 
     suspend fun apiCreateBill(request: BillCreateRequest): BillCreateResponse {
@@ -536,7 +369,8 @@ class AppRepository(
                 },
                 recurrence = remoteBill.recurrence,
                 category = remoteBill.category,
-                isPaid = remoteBill.isPaid
+                isPaid = remoteBill.isPaid,
+                remoteId = remoteBill._id
             )
             billDao.insertBill(b)
         }

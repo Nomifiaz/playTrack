@@ -9,6 +9,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.model.*
 import com.example.data.repository.AppRepository
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.io.File
@@ -17,6 +18,9 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
+
+    val sessionUserId: String? get() = repository.sessionManager.userId
+    val sessionUserName: String? get() = repository.sessionManager.userName
 
     // Bottom Navigation State
     private val _currentTab = MutableStateFlow("home")
@@ -36,6 +40,15 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
     // Notification Feed / In-app push Simulation Alerts
     private val _notifications = MutableStateFlow<List<String>>(emptyList())
     val notifications: StateFlow<List<String>> = _notifications.asStateFlow()
+
+    private val _realNotifications = MutableStateFlow<List<com.example.data.api.NotificationData>>(emptyList())
+    val realNotifications: StateFlow<List<com.example.data.api.NotificationData>> = _realNotifications.asStateFlow()
+
+    private val _selectedPodBalances = MutableStateFlow<List<com.example.data.api.PodBalance>>(emptyList())
+    val selectedPodBalances: StateFlow<List<com.example.data.api.PodBalance>> = _selectedPodBalances.asStateFlow()
+
+    private val _selectedPodActivity = MutableStateFlow<List<com.example.data.api.ActivityLogData>>(emptyList())
+    val selectedPodActivity: StateFlow<List<com.example.data.api.ActivityLogData>> = _selectedPodActivity.asStateFlow()
 
     // Expose flows from Repository
     val primaryUser: StateFlow<UserProfile?> = repository.primaryUser
@@ -69,6 +82,7 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
                 _isLoggedIn.value = true
                 _isOnboardingCompleted.value = true
                 repository.syncAll()
+                fetchServerNotifications()
                 addNotification("Welcome back! Synced with PayTrack Cloud.")
             } else {
                 repository.seedDatabase()
@@ -77,6 +91,23 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
                     _isLoggedIn.value = true
                     _isOnboardingCompleted.value = true
                 }
+            }
+        }
+    }
+
+    fun triggerSync() {
+        viewModelScope.launch {
+            try {
+                addNotification("Syncing data with PayTrack Cloud Server...")
+                val success = repository.syncAll()
+                if (success) {
+                    addNotification("Sync complete: Cloud database refreshed cleanly.")
+                } else {
+                    addNotification("Sync completed with offline mode.")
+                }
+            } catch (e: Exception) {
+                Log.e("PayTrackVM", "triggerSync failed", e)
+                addNotification("Sync completed with offline fallback.")
             }
         }
     }
@@ -91,6 +122,63 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
     fun selectPod(podId: Int) {
         _selectedPodId.value = podId
         _currentTab.value = "pods_detail"
+        _selectedPodBalances.value = emptyList()
+        _selectedPodActivity.value = emptyList()
+        fetchPodCloudDetails(podId)
+    }
+
+    fun fetchPodCloudDetails(podId: Int) {
+        viewModelScope.launch {
+            try {
+                val currentPods = repository.allPods.firstOrNull() ?: emptyList()
+                val targetPod = currentPods.find { it.id == podId }
+                if (targetPod != null) {
+                    val remoteId = repository.getRemotePodId(targetPod)
+                    if (remoteId != null) {
+                        val balRes = repository.apiGetPodBalances(targetPod)
+                        if (balRes.success && balRes.balances != null) {
+                            _selectedPodBalances.value = balRes.balances
+                        }
+                        val actRes = repository.apiGetPodActivity(targetPod)
+                        if (actRes.success && actRes.data != null) {
+                            _selectedPodActivity.value = actRes.data
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("PayTrackVM", "Failed to fetch cloud details for pod $podId", e)
+            }
+        }
+    }
+
+    fun settlePodPairwiseDebt(podId: Int, toUserId: String, amount: Double, paymentMethod: String) {
+        viewModelScope.launch {
+            try {
+                addNotification("Submitting settlement of $amount...")
+                val currentPods = repository.allPods.firstOrNull() ?: emptyList()
+                val targetPod = currentPods.find { it.id == podId }
+                if (targetPod != null) {
+                    val response = repository.apiSettlePodDebt(
+                        targetPod,
+                        com.example.data.api.PodSettleRequest(
+                            toUserId = toUserId,
+                            amount = amount,
+                            paymentMethod = paymentMethod
+                        )
+                    )
+                    if (response.success) {
+                        addNotification("🤝 Success: Settlement of $amount registered on cloud!")
+                        fetchPodCloudDetails(podId)
+                        repository.syncAll()
+                    } else {
+                        addNotification("Settle Error: ${response.message}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("PayTrackVM", "Failed to settle pairwise debt", e)
+                addNotification("Settlement failed: ${e.localizedMessage}")
+            }
+        }
     }
 
     fun addNotification(message: String) {
@@ -201,15 +289,52 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
         }
     }
 
-    fun completeOnboarding(name: String, currency: String, income: Double) {
+    fun loginUser(email: String, passwordRaw: String) {
+        viewModelScope.launch {
+            try {
+                addNotification("Connecting to PayTrack Cloud Server...")
+                val logResponse = repository.apiLogin(email, passwordRaw)
+                if (logResponse.success && logResponse.token != null) {
+                    repository.sessionManager.token = logResponse.token
+                    repository.sessionManager.userId = logResponse._id
+                    repository.sessionManager.userName = logResponse.name ?: "User"
+                    repository.sessionManager.userEmail = logResponse.email ?: email
+                    repository.sessionManager.currency = logResponse.currency ?: "USD"
+                    repository.sessionManager.isOnboarded = true
+
+                    _isLoggedIn.value = true
+                    _isOnboardingCompleted.value = true
+                    repository.syncAll()
+                    addNotification("Authenticated! Welcome back, ${logResponse.name ?: "User"}.")
+                } else {
+                    addNotification("Login Error: ${logResponse.message ?: "Invalid email or password."}")
+                }
+            } catch (e: Exception) {
+                Log.e("PayTrackLogin", "Login error", e)
+                addNotification("No Connection: ${e.localizedMessage}. Local cache fallback enabled.")
+                
+                // Offline fallback if local user already exists
+                val user = repository.primaryUser.firstOrNull()
+                if (user != null && user.email.equals(email, ignoreCase = true)) {
+                    _isLoggedIn.value = true
+                    _isOnboardingCompleted.value = true
+                    addNotification("Offline Access verified for ${user.name}.")
+                } else {
+                    addNotification("No local cache found for this email.")
+                }
+            }
+        }
+    }
+
+    fun completeOnboarding(name: String, email: String, passwordRaw: String, currency: String, income: Double) {
         viewModelScope.launch {
             try {
                 addNotification("Configuring cloud space profile...")
                 val regResponse = repository.apiRegister(
                     com.example.data.api.RegisterRequest(
                         name = name,
-                        email = "${name.lowercase().replace(" ", "")}@builder.warriach.online",
-                        password = "securepassword123",
+                        email = email,
+                        password = passwordRaw,
                         currency = currency,
                         primaryUseCase = "couple"
                     )
@@ -237,7 +362,12 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
                     repository.syncAll()
                     addNotification("Onboarding synced with PayTrack Server! Active primary: $name.")
                 } else {
-                    simulateLogin("${name.lowercase().replace(" ", "")}@builder.warriach.online", name)
+                    if (regResponse.message?.contains("Duplicate", ignoreCase = true) == true) {
+                        addNotification("Email exists. Attempting Automatic Cloud Login...")
+                        loginUser(email, passwordRaw)
+                    } else {
+                        addNotification("Onboarding Error: ${regResponse.message}")
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("PayTrackOnboard", "Onboarding error", e)
@@ -253,7 +383,7 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
                 repository.insertUser(
                     UserProfile(
                         name = name,
-                        email = "user@example.com",
+                        email = email,
                         monthlyIncome = income,
                         avatarName = "Richie",
                         currencyCode = currency,
@@ -268,6 +398,98 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
         }
     }
 
+    fun updateFmcToken(token: String) {
+        viewModelScope.launch {
+            try {
+                addNotification("Syncing device push token...")
+                val response = repository.apiUpdateProfile(
+                    com.example.data.api.ProfileUpdateRequest(
+                        name = null,
+                        currency = null,
+                        monthlyIncome = null,
+                        primaryUseCase = null,
+                        fcmToken = token
+                    )
+                )
+                if (response.success) {
+                    addNotification("FMC Device Token updated successfully!")
+                } else {
+                    addNotification("FMC Device Token update server error.")
+                }
+            } catch (e: Exception) {
+                Log.e("PayTrackVM", "Failed to update FMC device token", e)
+                addNotification("Could not update push token online: ${e.localizedMessage}")
+            }
+        }
+    }
+
+    fun updateProfile(name: String, currency: String, monthlyIncome: Double, primaryUseCase: String, fcmToken: String? = null) {
+        viewModelScope.launch {
+            try {
+                addNotification("Syncing profile updates to cloud...")
+                val response = repository.apiUpdateProfile(
+                    com.example.data.api.ProfileUpdateRequest(
+                        name = name,
+                        currency = currency,
+                        monthlyIncome = monthlyIncome,
+                        primaryUseCase = primaryUseCase,
+                        fcmToken = fcmToken
+                    )
+                )
+                if (response.success) {
+                    addNotification("Successfully updated profile details on PayTrack cloud!")
+                    fetchServerNotifications()
+                } else {
+                    addNotification("Update server response issue. Keeping local settings.")
+                }
+            } catch (e: Exception) {
+                Log.e("PayTrackVM", "Update profile failed on api", e)
+                addNotification("No internet. Applied modifications offline.")
+                
+                // Fallback offline update
+                val extProfile = primaryUser.value
+                if (extProfile != null) {
+                    val symbol = when (currency) {
+                        "PKR" -> "Rs."
+                        "INR" -> "₹"
+                        "EUR" -> "€"
+                        "GBP" -> "£"
+                        "AED" -> "د.إ"
+                        else -> "$"
+                    }
+                    repository.insertUser(
+                        extProfile.copy(
+                            name = name,
+                            currencyCode = currency,
+                            currencySymbol = symbol,
+                            monthlyIncome = monthlyIncome
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    fun fetchServerNotifications() {
+        viewModelScope.launch {
+            try {
+                val listResponse = repository.apiFetchNotifications()
+                if (listResponse.success && listResponse.data != null) {
+                    _realNotifications.value = listResponse.data
+                    // Check for unread alerts to notify user
+                    listResponse.data.filter { !it.isRead }.forEach { item ->
+                        val text = "[${item.title}] ${item.message}"
+                        if (!_notifications.value.contains(text)) {
+                            addNotification(text)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("PayTrackVM", "Failed to fetch cloud notifications", e)
+            }
+        }
+    }
+
     // EXPENSE ACTIONS
     fun addPersonalTransaction(
         amount: Double,
@@ -278,12 +500,19 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
     ) {
         viewModelScope.launch {
             try {
+                val mappedPaymentMethod = when (paymentMethod.lowercase().trim().replace(" ", "_")) {
+                    "cash" -> "cash"
+                    "card", "credit", "debit" -> "card"
+                    "bank", "bank_transfer", "transfer", "wire" -> "bank_transfer"
+                    "e_wallet", "e-wallet", "wallet", "mobile_wallet", "digital_wallet" -> "e_wallet"
+                    else -> "other"
+                }
                 val result = repository.apiCreateTransaction(
                     com.example.data.api.TransactionCreateRequest(
                         type = type.lowercase(),
                         amount = amount,
                         category = category,
-                        paymentMethod = paymentMethod,
+                        paymentMethod = mappedPaymentMethod,
                         note = note,
                         pod = null,
                         splitMethod = "equal"
@@ -297,7 +526,7 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
                         category = category,
                         type = type,
                         note = note,
-                        paymentMethod = paymentMethod,
+                        paymentMethod = mappedPaymentMethod,
                         userId = 1,
                         paidByUserId = 1
                     )
@@ -305,12 +534,19 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
                 }
             } catch (e: Exception) {
                 Log.e("PayTrackVM", "Offline transaction logged locally", e)
+                val mappedPaymentMethod = when (paymentMethod.lowercase().trim().replace(" ", "_")) {
+                    "cash" -> "cash"
+                    "card", "credit", "debit" -> "card"
+                    "bank", "bank_transfer", "transfer", "wire" -> "bank_transfer"
+                    "e_wallet", "e-wallet", "wallet", "mobile_wallet", "digital_wallet" -> "e_wallet"
+                    else -> "other"
+                }
                 val tx = Transaction(
                     amount = amount,
                     category = category,
                     type = type,
                     note = note,
-                    paymentMethod = paymentMethod,
+                    paymentMethod = mappedPaymentMethod,
                     userId = 1,
                     paidByUserId = 1
                 )
@@ -339,6 +575,7 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
                     )
                     repository.insertPod(newPod, emptyList())
                 }
+                repository.syncAll()
             } catch (e: Exception) {
                 Log.e("PayTrackVM", "Pod creation network error", e)
                 val code = java.util.UUID.randomUUID().toString().take(6).uppercase()
@@ -353,6 +590,26 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
         }
     }
 
+    fun joinPod(inviteCode: String) {
+        viewModelScope.launch {
+            try {
+                addNotification("Joining cloud shared cost Pod with code '$inviteCode'...")
+                val response = repository.apiJoinPod(
+                    com.example.data.api.PodJoinRequest(inviteCode = inviteCode)
+                )
+                if (response.success) {
+                    addNotification("Cloud Synchronized: Joined Pod space successfully!")
+                    repository.syncAll()
+                } else {
+                    addNotification("Failed to join Pod: ${response.message ?: "Invalid Invite Code"}")
+                }
+            } catch (e: Exception) {
+                Log.e("PayTrackVM", "Failed to join Pod online", e)
+                addNotification("Join failed: ${e.localizedMessage}. Network connection required to join collaborative cloud spaces.")
+            }
+        }
+    }
+
     fun addPodTransaction(
         podId: Int,
         amount: Double,
@@ -360,13 +617,23 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
         note: String,
         paidByUserId: Int,
         splitMethod: String,
-        membersCount: Int
+        membersCount: Int,
+        splits: List<com.example.data.api.TransactionSplitRequest>? = null,
+        paymentMethod: String = "card"
     ) {
         viewModelScope.launch {
             try {
                 val pods = repository.allPods.firstOrNull() ?: emptyList()
                 val targetPod = pods.find { it.id == podId }
                 val remotePodId = targetPod?.let { repository.getRemotePodId(it) }
+
+                val mappedPaymentMethod = when (paymentMethod.lowercase().trim().replace(" ", "_")) {
+                    "cash" -> "cash"
+                    "card", "credit", "debit" -> "card"
+                    "bank", "bank_transfer", "transfer", "wire" -> "bank_transfer"
+                    "e_wallet", "e-wallet", "wallet", "mobile_wallet", "digital_wallet" -> "e_wallet"
+                    else -> "other"
+                }
 
                 if (remotePodId != null) {
                     addNotification("Submitting collaborative expense to cloud...")
@@ -375,14 +642,16 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
                             type = "expense",
                             amount = amount,
                             category = category,
-                            paymentMethod = "Mobile Wallet",
+                            paymentMethod = mappedPaymentMethod,
                             note = note,
                             pod = remotePodId,
-                            splitMethod = splitMethod.lowercase()
+                            splitMethod = splitMethod.lowercase(),
+                            splits = splits
                         )
                     )
                     if (result.success) {
                         addNotification("Pod expense logged online across all spaces & synchronized!")
+                        repository.syncAll()
                         return@launch
                     }
                 }
@@ -392,9 +661,16 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
 
             val perMemberShare = amount / if (membersCount > 0) membersCount else 1
             val splitDetailsBuilder = StringBuilder()
-            for (i in 1..membersCount) {
-                splitDetailsBuilder.append("$i:$perMemberShare")
-                if (i < membersCount) splitDetailsBuilder.append(",")
+            if (splits != null && splitMethod.uppercase() == "EXACT") {
+                splits.forEachIndexed { index, sItem ->
+                    splitDetailsBuilder.append("${index + 1}:${sItem.amount}")
+                    if (index < splits.size - 1) splitDetailsBuilder.append(",")
+                }
+            } else {
+                for (i in 1..membersCount) {
+                    splitDetailsBuilder.append("$i:$perMemberShare")
+                    if (i < membersCount) splitDetailsBuilder.append(",")
+                }
             }
 
             val tx = Transaction(
@@ -405,10 +681,50 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
                 podId = podId,
                 paidByUserId = paidByUserId,
                 splitMethod = splitMethod,
-                splitDetails = splitDetailsBuilder.toString()
+                splitDetails = splitDetailsBuilder.toString(),
+                paymentMethod = paymentMethod
             )
             repository.insertTransaction(tx)
-            addNotification("Safe Fallback: Split $amount equally to local pod storage.")
+            addNotification("Safe Fallback: Split $amount ($splitMethod) to local pod storage.")
+        }
+    }
+
+    fun uploadReceipt(context: android.content.Context, uri: android.net.Uri, onSuccess: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                addNotification("Uploading receipt file to cloud backend...")
+                val contentResolver = context.contentResolver
+                val mimeType = contentResolver.getType(uri) ?: "image/jpeg"
+                val extension = when {
+                    mimeType.contains("pdf") -> "pdf"
+                    mimeType.contains("png") -> "png"
+                    else -> "jpg"
+               }
+               val inputStream = contentResolver.openInputStream(uri)
+               if (inputStream == null) {
+                   addNotification("Error: Could not read file stream")
+                   return@launch
+               }
+               val tempFile = java.io.File.createTempFile("receipt_", ".$extension", context.cacheDir)
+               tempFile.outputStream().use { outputStream ->
+                   inputStream.copyTo(outputStream)
+               }
+               val requestFile = okhttp3.RequestBody.create(
+                   mimeType.toMediaTypeOrNull(),
+                   tempFile
+               )
+               val bodyPart = okhttp3.MultipartBody.Part.createFormData("receipt", tempFile.name, requestFile)
+               val response = repository.apiUploadReceipt(bodyPart)
+               if (response.success && response.receiptUrl != null) {
+                   addNotification("📄 Receipt uploaded successfully: ${response.filename}")
+                   onSuccess(response.receiptUrl)
+               } else {
+                   addNotification("Upload failed: ${response.message ?: "Server Error"}")
+               }
+            } catch (e: Exception) {
+               Log.e("PayTrackVM", "Failed to upload receipt", e)
+               addNotification("Upload failed: ${e.localizedMessage}")
+            }
         }
     }
 
@@ -497,9 +813,10 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
     }
 
     // BILL REMINDERS
-    fun addBill(name: String, amount: Double, dueDateOffsetDays: Int, recurrence: String, category: String) {
+    fun addBill(name: String, amount: Double, dueDateOffsetDays: Int, recurrence: String, category: String, podIdString: String? = null) {
         viewModelScope.launch {
             val dueDateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(System.currentTimeMillis() + (dueDateOffsetDays * 1000L * 60 * 60 * 24)))
+            var createdRemoteId: String? = null
             try {
                 val result = repository.apiCreateBill(
                     com.example.data.api.BillCreateRequest(
@@ -508,11 +825,12 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
                         dueDate = dueDateStr,
                         recurrence = recurrence,
                         category = category,
-                        reminderDaysBefore = 1,
-                        pod = null
+                        reminderDaysBefore = 5,
+                        pod = podIdString
                     )
                 )
-                if (result.success) {
+                if (result.success && result.data != null) {
+                    createdRemoteId = result.data._id
                     addNotification("Cloud Synchronized: saved Bill reminder '$name' successfully!")
                     return@launch
                 }
@@ -527,7 +845,8 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
                 dueDate = dueDate,
                 recurrence = recurrence,
                 category = category,
-                isPaid = false
+                isPaid = false,
+                remoteId = createdRemoteId
             )
             repository.insertBill(newBill)
             addNotification("Saved bill '$name' locally (due in $dueDateOffsetDays days).")
@@ -536,6 +855,22 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
 
     fun markBillAsPaid(bill: Bill) {
         viewModelScope.launch {
+            try {
+                if (bill.remoteId != null) {
+                    addNotification("Sending bill payment request to server...")
+                    val response = repository.apiPayBill(bill.remoteId)
+                    if (response.success) {
+                        val updated = bill.copy(isPaid = true, paidAt = System.currentTimeMillis())
+                        repository.updateBill(updated)
+                        addNotification("Bill '${bill.name}' marked as PAID on server. Auto-logged split transaction synchronized!")
+                        return@launch
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("PayTrackVM", "apiPayBill call failed, falling back to local flow", e)
+            }
+
+            // Fallback
             val updated = bill.copy(isPaid = true, paidAt = System.currentTimeMillis())
             repository.updateBill(updated)
 
@@ -549,7 +884,7 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
                 paymentMethod = "Bank Wallet"
             )
             repository.insertTransaction(tx)
-            addNotification("Internet bill of ${bill.amount} marked as PAID. Automatically registered expense.")
+            addNotification("Bill '${bill.name}' marked as PAID locally. Automatically registered local expense.")
         }
     }
 
@@ -689,6 +1024,42 @@ class PayTrackViewModel(private val repository: AppRepository) : ViewModel() {
                 Log.e("PayTrackVM", "Api insertBudget failure", e)
             }
             repository.insertBudget(budget)
+        }
+    }
+
+    fun createBudget(category: String, limitAmount: Double, thresholdPercent: Int, startDate: String, endDate: String) {
+        viewModelScope.launch {
+            try {
+                addNotification("Creating budget for category '$category' on server...")
+                val response = repository.apiCreateBudget(
+                    com.example.data.api.BudgetCreateRequest(
+                        limitAmount = limitAmount,
+                        category = category,
+                        lowBalanceThresholdPercent = thresholdPercent,
+                        startDate = startDate,
+                        endDate = endDate
+                    )
+                )
+                if (response.success) {
+                    addNotification("Budget for '$category' created successfully on Cloud Server!")
+                    repository.syncBudgets()
+                    return@launch
+                }
+            } catch (e: Exception) {
+                Log.e("PayTrackVM", "createBudget API failed, falling back to local simulation", e)
+            }
+            // fallback
+            val b = Budget(
+                category = category,
+                limitAmount = limitAmount,
+                thresholdPercent = thresholdPercent,
+                spentAmount = 0.0,
+                remainingAmount = limitAmount,
+                percentSpent = 0.0,
+                isOverspent = false
+            )
+            repository.insertBudget(b)
+            addNotification("Created budget for '$category' locally.")
         }
     }
 

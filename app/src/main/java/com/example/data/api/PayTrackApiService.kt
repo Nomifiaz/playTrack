@@ -326,6 +326,12 @@ data class FeedUser(
 )
 
 @JsonClass(generateAdapter = true)
+data class FeedPod(
+    val _id: String,
+    val name: String
+)
+
+@JsonClass(generateAdapter = true)
 data class FeedTransaction(
     val _id: String,
     val user: FeedUser?,
@@ -334,7 +340,7 @@ data class FeedTransaction(
     val category: String,
     val date: String,
     val note: String? = null,
-    val pod: String? = null
+    val pod: FeedPod? = null
 )
 
 @JsonClass(generateAdapter = true)

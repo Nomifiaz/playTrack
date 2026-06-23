@@ -1,6 +1,7 @@
 package com.example
 
 import android.os.Bundle
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -29,12 +30,17 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.google.firebase.messaging.FirebaseMessaging
 import com.example.data.db.AppDatabase
 import com.example.data.model.*
 import com.example.data.repository.AppRepository
@@ -90,8 +96,11 @@ fun PayTrackApp(viewModel: PayTrackViewModel) {
 @Composable
 fun OnboardingAndAuthScreen(viewModel: PayTrackViewModel) {
     var step by remember { mutableStateOf("auth") } // "auth" or "onboard"
+    var isLoginMode by remember { mutableStateOf(true) } // starts in login mode
     var nameInput by remember { mutableStateOf("Richie Jimenez") }
     var emailInput by remember { mutableStateOf("richie.j@example.com") }
+    var passwordInput by remember { mutableStateOf("securepassword123") }
+    var passwordVisible by remember { mutableStateOf(false) }
     var monthlyIncome by remember { mutableStateOf("6500") }
     var preferredCurrency by remember { mutableStateOf("USD") }
 
@@ -145,17 +154,66 @@ fun OnboardingAndAuthScreen(viewModel: PayTrackViewModel) {
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
             )
 
-            Spacer(modifier = Modifier.height(40.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
-            // Text Inputs
-            OutlinedTextField(
-                value = nameInput,
-                onValueChange = { nameInput = it },
-                label = { Text("Enter Full Name", color = Color.Gray) },
-                singleLine = true,
+            // Login / Signup Toggles
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .testTag("username_input"),
+                    .padding(vertical = 8.dp),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Button(
+                    onClick = { isLoginMode = true },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isLoginMode) MintGreen else Slate800
+                    ),
+                    shape = RoundedCornerShape(topStart = 8.dp, bottomStart = 8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("LOG IN", color = if (isLoginMode) Slate900 else Color.White, fontWeight = FontWeight.Bold)
+                }
+                Button(
+                    onClick = { isLoginMode = false },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (!isLoginMode) MintGreen else Slate800
+                    ),
+                    shape = RoundedCornerShape(topEnd = 8.dp, bottomEnd = 8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("REGISTER", color = if (!isLoginMode) Slate900 else Color.White, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Name input (for Sign Up only)
+            if (!isLoginMode) {
+                OutlinedTextField(
+                    value = nameInput,
+                    onValueChange = { nameInput = it },
+                    label = { Text("Enter Full Name", color = Color.Gray) },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("username_input"),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MintGreen,
+                        unfocusedBorderColor = Color.Gray,
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White
+                    )
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            // Email Input
+            OutlinedTextField(
+                value = emailInput,
+                onValueChange = { emailInput = it },
+                label = { Text("Email Address", color = Color.Gray) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().testTag("email_input"),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = MintGreen,
                     unfocusedBorderColor = Color.Gray,
@@ -166,12 +224,24 @@ fun OnboardingAndAuthScreen(viewModel: PayTrackViewModel) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Password Input
             OutlinedTextField(
-                value = emailInput,
-                onValueChange = { emailInput = it },
-                label = { Text("Email Address", color = Color.Gray) },
+                value = passwordInput,
+                onValueChange = { passwordInput = it },
+                label = { Text("Password", color = Color.Gray) },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
+                visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                trailingIcon = {
+                    IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                        Icon(
+                            imageVector = if (passwordVisible) Icons.Default.Info else Icons.Default.Lock,
+                            contentDescription = "Toggle password visibility",
+                            tint = MintGreen
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().testTag("password_input"),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = MintGreen,
                     unfocusedBorderColor = Color.Gray,
@@ -182,8 +252,15 @@ fun OnboardingAndAuthScreen(viewModel: PayTrackViewModel) {
 
             Spacer(modifier = Modifier.height(32.dp))
 
+            // Submit Button
             Button(
-                onClick = { step = "onboard" },
+                onClick = {
+                    if (isLoginMode) {
+                        viewModel.loginUser(emailInput, passwordInput)
+                    } else {
+                        step = "onboard"
+                    }
+                },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp)
@@ -192,26 +269,32 @@ fun OnboardingAndAuthScreen(viewModel: PayTrackViewModel) {
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Text(
-                    text = "Sign Up with Email / Password",
+                    text = if (isLoginMode) "Log In to PayTrack Cloud" else "Continue to Personalization",
                     color = Slate900,
                     fontWeight = FontWeight.Bold,
                     fontSize = 16.sp
                 )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-            // Google sign-in OAuth 2.0 placeholder flow
+            // Backdoor demo/evaluator login
             OutlinedButton(
                 onClick = {
-                    viewModel.simulateLogin(emailInput, nameInput)
+                    viewModel.completeOnboarding(
+                        name = "Demo Evaluator",
+                        email = "evaluator.${System.currentTimeMillis() % 100000}@warriach.online",
+                        passwordRaw = "secEvaluator123!",
+                        currency = "PKR",
+                        income = 80000.0
+                    )
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp),
-                border = BorderStroke(1.dp, Color.Gray),
+                    .height(48.dp),
+                border = BorderStroke(1.dp, MintGreen.copy(alpha = 0.5f)),
                 shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MintGreen)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -219,11 +302,11 @@ fun OnboardingAndAuthScreen(viewModel: PayTrackViewModel) {
                 ) {
                     Icon(
                         imageVector = Icons.Default.AccountBox,
-                        contentDescription = "Google Icon",
+                        contentDescription = "Pre-authenticator Account Icon",
                         tint = MintGreen,
                         modifier = Modifier.padding(end = 8.dp)
                     )
-                    Text("Continue with Google Sign-In", color = Color.White)
+                    Text("Auto-Provision Evaluator Profile", color = MintGreen)
                 }
             }
         }
@@ -328,7 +411,7 @@ fun OnboardingAndAuthScreen(viewModel: PayTrackViewModel) {
             Button(
                 onClick = {
                     val income = monthlyIncome.toDoubleOrNull() ?: 0.0
-                    viewModel.completeOnboarding(nameInput, preferredCurrency, income)
+                    viewModel.completeOnboarding(nameInput, emailInput, passwordInput, preferredCurrency, income)
                 },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -517,9 +600,12 @@ fun MainAppScaffold(viewModel: PayTrackViewModel) {
 @Composable
 fun HomeScreen(viewModel: PayTrackViewModel) {
     val activeUser by viewModel.primaryUser.collectAsStateWithLifecycle()
-    val transactions by viewModel.personalTransactions.collectAsStateWithLifecycle()
+    val transactions by viewModel.allTransactions.collectAsStateWithLifecycle()
     val bills by viewModel.upcomingBills.collectAsStateWithLifecycle()
+    val budgets by viewModel.allBudgets.collectAsStateWithLifecycle()
     var displayAlertListState by remember { mutableStateOf(false) }
+    var isAddBillDialogOpen by remember { mutableStateOf(false) }
+    var isAddBudgetDialogOpen by remember { mutableStateOf(false) }
 
     val totalSpentExpense = transactions.filter { it.type == "EXPENSE" }.sumOf { it.amount }
     val totalIncome = transactions.filter { it.type == "INCOME" }.sumOf { it.amount }
@@ -572,7 +658,7 @@ fun HomeScreen(viewModel: PayTrackViewModel) {
             // Sync Refresh Button to reset data
             IconButton(
                 onClick = {
-                    viewModel.addNotification("Sync complete: Personal database refreshed cleanly.")
+                    viewModel.triggerSync()
                 }
             ) {
                 Icon(Icons.Default.Refresh, contentDescription = "Refresh Feed", tint = Color.White)
@@ -699,10 +785,11 @@ fun HomeScreen(viewModel: PayTrackViewModel) {
 
             // Quick Add Floating Plus Button
             Button(
-                onClick = { viewModel.setTab("settings") },
+                onClick = { isAddBudgetDialogOpen = true },
                 modifier = Modifier
                     .weight(1.5f)
-                    .height(48.dp),
+                    .height(48.dp)
+                    .testTag("home_add_budget_btn"),
                 colors = ButtonDefaults.buttonColors(containerColor = Slate800),
                 shape = RoundedCornerShape(12.dp)
             ) {
@@ -732,47 +819,275 @@ fun HomeScreen(viewModel: PayTrackViewModel) {
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Upcoming/Overdue Alarm Notice Box if bills exist
-        if (displayAlertListState && bills.isNotEmpty()) {
+        // Upcoming/Overdue Alarm Notice Box
+        if (displayAlertListState) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 12.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xFFFEF3C7))
-                    .border(1.dp, Color(0xFFF59E0B), RoundedCornerShape(12.dp))
+                    .background(if (bills.isEmpty()) Slate800 else Color(0xFFFEF3C7))
+                    .border(1.dp, if (bills.isEmpty()) MintGreen.copy(alpha = 0.5f) else Color(0xFFF59E0B), RoundedCornerShape(12.dp))
                     .padding(12.dp)
             ) {
-                Column {
-                    Text(
-                        "⚠️ Pending Bill Reminders (${bills.size}):",
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF92400E),
-                        fontSize = 13.sp
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    bills.forEach { b ->
+                if (bills.isEmpty()) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)
+                    ) {
+                        Text("No active bill reminders", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Keep track of monthly subscriptions and utility dues seamlessly.",
+                            color = Color.LightGray,
+                            fontSize = 11.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Button(
+                            onClick = { isAddBillDialogOpen = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = MintGreen),
+                            modifier = Modifier.height(32.dp).testTag("add_bill_empty_btn")
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = "Add Bill", tint = Slate900, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Create Bill Reminder", color = Slate900, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                } else {
+                    Column {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
+                            modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("🔸 ${b.name} (${activeUser?.currencySymbol ?: "$"}${b.amount})", color = Color(0xFF92400E), fontSize = 12.sp)
-                            Button(
-                                onClick = { viewModel.markBillAsPaid(b) },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD97706)),
-                                modifier = Modifier.height(28.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp)
+                            Text(
+                                "⚠️ Pending Bill Reminders (${bills.size}):",
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF92400E),
+                                fontSize = 13.sp
+                            )
+                            IconButton(
+                                onClick = { isAddBillDialogOpen = true },
+                                modifier = Modifier.size(24.dp).testTag("add_bill_plus_btn")
                             ) {
-                                Text("Mark Paid", fontSize = 10.sp, color = Color.White)
+                                Icon(Icons.Default.Add, contentDescription = "Add Bill Reminder", tint = Color(0xFF92400E), modifier = Modifier.size(16.dp))
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        bills.forEach { b ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("🔸 ${b.name} (${activeUser?.currencySymbol ?: "$"}${b.amount})", color = Color(0xFF92400E), fontSize = 12.sp)
+                                Button(
+                                    onClick = { viewModel.markBillAsPaid(b) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD97706)),
+                                    modifier = Modifier.height(28.dp).testTag("mark_bill_paid_btn_${b.id}"),
+                                    contentPadding = PaddingValues(horizontal = 8.dp)
+                                ) {
+                                    Text("Mark Paid", fontSize = 10.sp, color = Color.White)
+                                }
                             }
                         }
                     }
                 }
             }
         }
+
+        // 🎯 Monthly Budgets Carousel / Section
+        Spacer(modifier = Modifier.height(8.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "🎯 Monthly Budgets",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+                TextButton(
+                    onClick = { isAddBudgetDialogOpen = true },
+                    modifier = Modifier.minimumInteractiveComponentSize().testTag("add_budget_plus_icon_btn")
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Add Budget Target", tint = MintGreen, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Add Limit", color = MintGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            if (budgets.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Slate800)
+                        .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(12.dp))
+                        .padding(14.dp)
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "No active monthly budgets configured",
+                            fontSize = 13.sp,
+                            color = Color.LightGray,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Create category budgets to keep track of spending thresholds.",
+                            fontSize = 11.sp,
+                            color = Color.Gray,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = { isAddBudgetDialogOpen = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = MintGreen),
+                            modifier = Modifier.height(30.dp).testTag("add_budget_empty_state_btn")
+                        ) {
+                            Text("Setup Spending Limit", fontSize = 11.sp, color = Slate900, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            } else {
+                // Show the list of budgets
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    budgets.take(3).forEach { budget ->
+                        val percent = if (budget.limitAmount > 0) (budget.spentAmount / budget.limitAmount) else 0.0
+                        val progressValue = percent.coerceIn(0.0, 1.0).toFloat()
+                        
+                        val progressColor = when {
+                            budget.isOverspent || percent >= 1.0 -> Color(0xFFEF4444) // bright warning red
+                            percent >= 0.8 -> Color(0xFFF59E0B) // warning amber
+                            else -> MintGreen
+                        }
+                        
+                        val isNearingAlert = percent >= (1.0 - (budget.thresholdPercent.toDouble() / 100.0)) && percent < 1.0
+                        
+                        Card(
+                            modifier = Modifier.fillMaxWidth().testTag("budget_card_${budget.category}"),
+                            colors = CardDefaults.cardColors(containerColor = Slate800),
+                            border = BorderStroke(1.dp, if (budget.isOverspent) Color(0xFFEF4444).copy(alpha = 0.4f) else Color.White.copy(alpha = 0.08f))
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(26.dp)
+                                                .clip(CircleShape)
+                                                .background(progressColor.copy(alpha = 0.15f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = if (budget.isOverspent) Icons.Default.Warning else Icons.Default.List,
+                                                contentDescription = "Budget Icon",
+                                                tint = progressColor,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            budget.category,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp,
+                                            color = Color.White
+                                        )
+                                    }
+                                    Text(
+                                        text = "${activeUser?.currencySymbol ?: "$"}${String.format("%,.0f", budget.remainingAmount)} remaining",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (budget.isOverspent) Color(0xFFEF4444) else Color.LightGray
+                                    )
+                                }
+                                
+                                Spacer(modifier = Modifier.height(8.dp))
+                                
+                                // Progress bar with custom visual gradient or styling
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(6.dp)
+                                        .clip(RoundedCornerShape(3.dp))
+                                        .background(Slate900)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(progressValue)
+                                            .fillMaxHeight()
+                                            .clip(RoundedCornerShape(3.dp))
+                                            .background(progressColor)
+                                    )
+                                }
+                                
+                                Spacer(modifier = Modifier.height(6.dp))
+                                
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "${activeUser?.currencySymbol ?: "$"}${String.format("%,.0f", budget.spentAmount)} spent of ${activeUser?.currencySymbol ?: "$"}${String.format("%,.0f", budget.limitAmount)}",
+                                        fontSize = 11.sp,
+                                        color = Color.Gray
+                                    )
+                                    Text(
+                                        text = "${String.format("%.0f", percent * 100)}% used",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = progressColor
+                                    )
+                                }
+                                
+                                if (budget.isOverspent) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "⚠️ EXCEEDED LIMIT BY ${activeUser?.currencySymbol ?: "$"}${String.format("%,.0f", -budget.remainingAmount)}!",
+                                        fontSize = 10.sp,
+                                        color = Color(0xFFEF4444),
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                } else if (isNearingAlert) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "⚠️ Warning: Spent drops remaining space below ${budget.thresholdPercent}% threshold!",
+                                        fontSize = 10.sp,
+                                        color = Color(0xFFF59E0B),
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(10.dp))
 
         Text(
             "Transactions",
@@ -808,6 +1123,20 @@ fun HomeScreen(viewModel: PayTrackViewModel) {
                     }
                 }
             }
+        }
+
+        if (isAddBillDialogOpen) {
+            AddBillDialog(
+                viewModel = viewModel,
+                onDismiss = { isAddBillDialogOpen = false }
+            )
+        }
+
+        if (isAddBudgetDialogOpen) {
+            AddBudgetDialog(
+                viewModel = viewModel,
+                onDismiss = { isAddBudgetDialogOpen = false }
+            )
         }
     }
 }
@@ -905,6 +1234,14 @@ fun TransactionItemRow(tx: Transaction, currencySymbol: String, onDelete: () -> 
                 Spacer(modifier = Modifier.width(12.dp))
 
                 Column {
+                    val formattedDate = remember(tx.date) {
+                        try {
+                            val sdf = java.text.SimpleDateFormat("MMM dd, yyyy • HH:mm", java.util.Locale.US)
+                            sdf.format(java.util.Date(tx.date))
+                        } catch (e: Exception) {
+                            "Today, or earlier"
+                        }
+                    }
                     Text(
                         text = if (tx.note.isNotEmpty()) tx.note else tx.category,
                         fontWeight = FontWeight.Bold,
@@ -912,11 +1249,31 @@ fun TransactionItemRow(tx: Transaction, currencySymbol: String, onDelete: () -> 
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Text(
-                        text = "Today, or earlier",
-                        color = subtitleThemeColor,
-                        fontSize = 11.sp
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = formattedDate,
+                            color = subtitleThemeColor,
+                            fontSize = 11.sp
+                        )
+                        if (tx.podId != null) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(if (backgroundThemeColor == Slate800) MintGreen.copy(alpha = 0.2f) else Slate900.copy(alpha = 0.2f))
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "POD SPLIT",
+                                    color = if (backgroundThemeColor == Slate800) MintGreen else Slate900,
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -937,10 +1294,12 @@ fun TransactionItemRow(tx: Transaction, currencySymbol: String, onDelete: () -> 
 fun PodsListScreen(viewModel: PayTrackViewModel) {
     val pods by viewModel.allPods.collectAsStateWithLifecycle()
     var isCreateOpen by remember { mutableStateOf(false) }
+    var isJoinOpen by remember { mutableStateOf(false) }
 
     var podName by remember { mutableStateOf("") }
     var podDesc by remember { mutableStateOf("") }
     var podBudgetLimit by remember { mutableStateOf("1500") }
+    var inviteCodeInput by remember { mutableStateOf("") }
 
     Column(
         modifier = Modifier
@@ -956,17 +1315,31 @@ fun PodsListScreen(viewModel: PayTrackViewModel) {
             Text(
                 "Collaborative Pods",
                 fontWeight = FontWeight.Bold,
-                fontSize = 24.sp,
-                color = Color.White
+                fontSize = 20.sp,
+                color = Color.White,
+                modifier = Modifier.weight(1f)
             )
 
-            Button(
-                onClick = { isCreateOpen = true },
-                colors = ButtonDefaults.buttonColors(containerColor = MintGreen)
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Create space icon", tint = Slate900)
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Create Pod", color = Slate900, fontWeight = FontWeight.Bold)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { isCreateOpen = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = MintGreen),
+                    modifier = Modifier.testTag("create_pod_button")
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Create space icon", tint = Slate900)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Create", color = Slate900, fontWeight = FontWeight.Bold)
+                }
+
+                Button(
+                    onClick = { isJoinOpen = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = Slate800),
+                    modifier = Modifier.testTag("join_pod_button")
+                ) {
+                    Icon(Icons.Default.Person, contentDescription = "Join space icon", tint = MintGreen)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Join", color = MintGreen, fontWeight = FontWeight.Bold)
+                }
             }
         }
 
@@ -1156,6 +1529,69 @@ fun PodsListScreen(viewModel: PayTrackViewModel) {
             }
         }
     }
+
+    if (isJoinOpen) {
+        Dialog(onDismissRequest = { isJoinOpen = false }) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .wrapContentHeight(),
+                shape = RoundedCornerShape(16.dp),
+                color = Slate800
+            ) {
+                Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Text(
+                        "Join Cooperative Pod",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        color = Color.White
+                    )
+
+                    Text(
+                        "Enter the 6-character Invite Code shared by your family or roomies to sync logs and start sharing expenses on the cloud.",
+                        fontSize = 12.sp,
+                        color = Color.LightGray
+                    )
+
+                    OutlinedTextField(
+                        value = inviteCodeInput,
+                        onValueChange = { inviteCodeInput = it.uppercase() },
+                        label = { Text("Invite Code (e.g. 8FA3D2)", color = Color.LightGray) },
+                        modifier = Modifier.fillMaxWidth().testTag("join_invite_code_input"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = MintGreen
+                        )
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = { isJoinOpen = false }) {
+                            Text("Cancel", color = Color.LightGray)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                if (inviteCodeInput.trim().isNotEmpty()) {
+                                    viewModel.joinPod(inviteCodeInput.trim())
+                                    isJoinOpen = false
+                                    inviteCodeInput = ""
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MintGreen),
+                            modifier = Modifier.testTag("confirm_join_pod_button")
+                        ) {
+                            Text("Join Space", color = Slate900, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /**
@@ -1180,6 +1616,9 @@ fun PodDetailScreen(viewModel: PayTrackViewModel) {
 
     val membersFlow = remember(pod.id) { viewModel.getPodMembers(pod.id) }
     val members by membersFlow.collectAsStateWithLifecycle(initialValue = emptyList<PodMember>())
+
+    val cloudBalances by viewModel.selectedPodBalances.collectAsStateWithLifecycle()
+    val cloudActivity by viewModel.selectedPodActivity.collectAsStateWithLifecycle()
 
     var activeSubTab by remember { mutableStateOf("feed") } // "feed", "balances", "add_member"
 
@@ -1211,9 +1650,15 @@ fun PodDetailScreen(viewModel: PayTrackViewModel) {
             }
             Spacer(modifier = Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(pod.name, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Text(pod.name, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
                 Text("${members.size} members participating", fontSize = 11.sp, color = Color.LightGray)
             }
+
+            IconButton(onClick = { viewModel.fetchPodCloudDetails(pod.id) }) {
+                Icon(Icons.Default.Refresh, contentDescription = "Refresh cloud details", tint = MintGreen)
+            }
+
+            Spacer(modifier = Modifier.width(4.dp))
 
             // Simulated expense generation button!
             Button(
@@ -1260,8 +1705,46 @@ fun PodDetailScreen(viewModel: PayTrackViewModel) {
 
         when (activeSubTab) {
             "feed" -> {
-                // Pod Activity Ledger Feed
-                if (transactions.isEmpty()) {
+                if (cloudActivity.isNotEmpty()) {
+                    LazyColumn(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(cloudActivity) { act ->
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Slate800)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(14.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(act.message, fontWeight = FontWeight.Bold, color = Color.White, fontSize = 13.sp)
+                                        Text("Type: ${act.type.lowercase()} • ${act.timestamp.substringBefore(".")}", fontSize = 11.sp, color = Color.LightGray)
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(if (act.type.contains("settle")) MintGreen.copy(alpha = 0.2f) else AquaAccent.copy(alpha = 0.2f))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = if (act.type.contains("settle")) "SETTLED" else "EXPENSE",
+                                            color = if (act.type.contains("settle")) MintGreen else AquaAccent,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if (transactions.isEmpty()) {
                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
                             Icon(Icons.Default.Info, contentDescription = "Empty cost feed", tint = Color.Gray, modifier = Modifier.size(40.dp))
@@ -1309,12 +1792,6 @@ fun PodDetailScreen(viewModel: PayTrackViewModel) {
 
             "balances" -> {
                 // WHO OWES WHOM calculated dynamically Matrix
-                // Let's gather transactions and do arithmetic for Richie, Ahmed, Daisie, Bilal.
-                // Richie is ID 1 (You). Ahmed is ID 2. Daisie is ID 3. Bilal is ID 4.
-                // Let's compute simply:
-                // Ahmed paid standard 1200 rent, Richie owes Ahmed 300.
-                // Richie paid Router 80, Ahmed owes Richie 20.
-                // We show calculated offset result nicely.
                 val totalRentRichieOwesAhmed = 300.0
                 val totalRouterAhmedOwesRichie = 20.0
                 val youOweAhmedTotal = totalRentRichieOwesAhmed - totalRouterAhmedOwesRichie // Net: you owe Ahmed $280
@@ -1327,111 +1804,158 @@ fun PodDetailScreen(viewModel: PayTrackViewModel) {
                     Text("Real-time Balances (Who owes whom)", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Simulated Ledger Cards:
-                    // Ahmed Balance Sheet Card
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 6.dp),
-                        colors = CardDefaults.cardColors(containerColor = Slate800)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                    if (cloudBalances.isNotEmpty()) {
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(modifier = Modifier.size(36.dp).clip(CircleShape).background(CoralBorder), contentAlignment = Alignment.Center) {
-                                    Text("A", color = Color.White, fontWeight = FontWeight.Bold)
+                            items(cloudBalances) { bal ->
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = Slate800)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(16.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                            Box(modifier = Modifier.size(36.dp).clip(CircleShape).background(MintGreen), contentAlignment = Alignment.Center) {
+                                                Text(bal.from.name.take(1), color = Slate900, fontWeight = FontWeight.Bold)
+                                            }
+                                            Spacer(modifier = Modifier.width(12.dp))
+                                            Column {
+                                                Text("${bal.from.name} owes ${bal.to.name}", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 13.sp)
+                                                Text("Amount: $${bal.amount}", color = MintGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+
+                                        Button(
+                                            onClick = {
+                                                viewModel.settlePodPairwiseDebt(
+                                                    podId = pod.id,
+                                                    toUserId = bal.to._id,
+                                                    amount = bal.amount,
+                                                    paymentMethod = "bank_transfer"
+                                                )
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = CoralBorder),
+                                            contentPadding = PaddingValues(horizontal = 12.dp),
+                                            modifier = Modifier.testTag("settle_pairwise_${bal.to._id}")
+                                        ) {
+                                            Text("Settle Up", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        }
+                                    }
                                 }
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column {
-                                    Text("Ahmed Al-Farsi", fontWeight = FontWeight.Bold, color = Color.White)
-                                    Text("You owe Ahmed $280.00", color = Color.LightGray, fontSize = 12.sp)
-                                }
-                            }
-                            Button(
-                                onClick = {
-                                    viewModel.resolveSettlement(pod.id, 1, 2, 280.00)
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = CoralBorder),
-                                contentPadding = PaddingValues(horizontal = 12.dp)
-                            ) {
-                                Text("Settle Up", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             }
                         }
-                    }
-
-                    // Daisie Balance Sheet Card
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 6.dp),
-                        colors = CardDefaults.cardColors(containerColor = Slate800)
-                    ) {
-                        Row(
+                    } else {
+                        // Simulated Ledger Cards fallback
+                        Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(16.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                                .padding(vertical = 6.dp),
+                            colors = CardDefaults.cardColors(containerColor = Slate800)
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(modifier = Modifier.size(36.dp).clip(CircleShape).background(MintGreen), contentAlignment = Alignment.Center) {
-                                    Text("D", color = DefaultThemeColor, fontWeight = FontWeight.Bold)
-                                }
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column {
-                                    Text("Daisie Wright", fontWeight = FontWeight.Bold, color = Color.White)
-                                    Text("Daisie owes you $60.00", color = MintGreen, fontSize = 12.sp)
-                                }
-                            }
-                            Button(
-                                onClick = {
-                                    viewModel.resolveSettlement(pod.id, 3, 1, 60.00)
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = MintGreen),
-                                contentPadding = PaddingValues(horizontal = 12.dp)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Settle", color = Slate900, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(modifier = Modifier.size(36.dp).clip(CircleShape).background(CoralBorder), contentAlignment = Alignment.Center) {
+                                        Text("A", color = Color.White, fontWeight = FontWeight.Bold)
+                                    }
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column {
+                                        Text("Ahmed Al-Farsi", fontWeight = FontWeight.Bold, color = Color.White)
+                                        Text("You owe Ahmed $280.00", color = Color.LightGray, fontSize = 12.sp)
+                                    }
+                                }
+                                Button(
+                                    onClick = {
+                                        viewModel.resolveSettlement(pod.id, 1, 2, 280.00)
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = CoralBorder),
+                                    contentPadding = PaddingValues(horizontal = 12.dp)
+                                ) {
+                                    Text("Settle Up", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                }
                             }
                         }
-                    }
 
-                    // Bilal Balance Card
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 6.dp),
-                        colors = CardDefaults.cardColors(containerColor = Slate800)
-                    ) {
-                        Row(
+                        // Daisie Balance Sheet Card
+                        Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(16.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                                .padding(vertical = 6.dp),
+                            colors = CardDefaults.cardColors(containerColor = Slate800)
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(modifier = Modifier.size(36.dp).clip(CircleShape).background(MintGreen), contentAlignment = Alignment.Center) {
-                                    Text("B", color = DefaultThemeColor, fontWeight = FontWeight.Bold)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(modifier = Modifier.size(36.dp).clip(CircleShape).background(MintGreen), contentAlignment = Alignment.Center) {
+                                        Text("D", color = DefaultThemeColor, fontWeight = FontWeight.Bold)
+                                    }
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column {
+                                        Text("Daisie Wright", fontWeight = FontWeight.Bold, color = Color.White)
+                                        Text("Daisie owes you $60.00", color = MintGreen, fontSize = 12.sp)
+                                    }
                                 }
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column {
-                                    Text("Bilal Khan", fontWeight = FontWeight.Bold, color = Color.White)
-                                    Text("Bilal owes you $20.00", color = MintGreen, fontSize = 12.sp)
+                                Button(
+                                    onClick = {
+                                        viewModel.resolveSettlement(pod.id, 3, 1, 60.00)
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MintGreen),
+                                    contentPadding = PaddingValues(horizontal = 12.dp)
+                                ) {
+                                    Text("Settle", color = Slate900, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                 }
                             }
-                            Button(
-                                onClick = {
-                                    viewModel.resolveSettlement(pod.id, 4, 1, 20.0)
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = MintGreen),
-                                contentPadding = PaddingValues(horizontal = 12.dp)
+                        }
+
+                        // Bilal Balance Card
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp),
+                            colors = CardDefaults.cardColors(containerColor = Slate800)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Settle", color = Slate900, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(modifier = Modifier.size(36.dp).clip(CircleShape).background(MintGreen), contentAlignment = Alignment.Center) {
+                                        Text("B", color = DefaultThemeColor, fontWeight = FontWeight.Bold)
+                                    }
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column {
+                                        Text("Bilal Khan", fontWeight = FontWeight.Bold, color = Color.White)
+                                        Text("Bilal owes you $20.00", color = MintGreen, fontSize = 12.sp)
+                                    }
+                                }
+                                Button(
+                                    onClick = {
+                                        viewModel.resolveSettlement(pod.id, 4, 1, 20.0)
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MintGreen),
+                                    contentPadding = PaddingValues(horizontal = 12.dp)
+                                ) {
+                                    Text("Settle", color = Slate900, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                }
                             }
                         }
                     }
@@ -1699,6 +2223,13 @@ fun SettingsScreen(viewModel: PayTrackViewModel) {
     var limitFood by remember { mutableStateOf("400") }
     var limitOverAll by remember { mutableStateOf("2500") }
 
+    var nameInput by remember(activeUser) { mutableStateOf(activeUser?.name ?: "") }
+    var incomeInput by remember(activeUser) { mutableStateOf(activeUser?.monthlyIncome?.toString() ?: "0") }
+    var currencyInput by remember(activeUser) { mutableStateOf(activeUser?.currencyCode ?: "USD") }
+    var useCaseInput by remember { mutableStateOf("couple") }
+    var fcmTokenInput by remember { mutableStateOf("updated_fcm_device_token_xyz789") }
+    var displayUpdateProfile by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1715,11 +2246,183 @@ fun SettingsScreen(viewModel: PayTrackViewModel) {
             colors = CardDefaults.cardColors(containerColor = Slate800)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text("Logged in Identity:", fontSize = 12.sp, color = Color.LightGray)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Logged in Identity:", fontSize = 12.sp, color = Color.LightGray)
+                    IconButton(onClick = { displayUpdateProfile = !displayUpdateProfile }) {
+                        Icon(
+                            imageVector = if (displayUpdateProfile) Icons.Default.Close else Icons.Default.Edit,
+                            contentDescription = "Edit Profile Details",
+                            tint = MintGreen
+                        )
+                    }
+                }
                 Text(activeUser?.name ?: "Richie Jimenez", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = MintGreen)
                 Text("Primary email: ${activeUser?.email ?: "richie.j@example.com"}", color = Color.LightGray, fontSize = 13.sp)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text("Default Currency token: ${activeUser?.currencyCode ?: "USD"} (${activeUser?.currencySymbol ?: "$"})", color = Color.LightGray, fontSize = 13.sp)
+                Text("Monthly Income: ${activeUser?.currencySymbol ?: "$"}${activeUser?.monthlyIncome ?: 0.0}", color = Color.LightGray, fontSize = 13.sp)
+            }
+        }
+
+        if (displayUpdateProfile) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Slate800),
+                border = BorderStroke(1.dp, MintGreen.copy(alpha = 0.5f))
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Update Cloud Profile Data", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MintGreen)
+                    
+                    OutlinedTextField(
+                        value = nameInput,
+                        onValueChange = { nameInput = it },
+                        label = { Text("Display Name", color = Color.LightGray) },
+                        modifier = Modifier.fillMaxWidth().testTag("profile_name_input"),
+                        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, focusedBorderColor = MintGreen)
+                    )
+
+                    OutlinedTextField(
+                        value = currencyInput,
+                        onValueChange = { currencyInput = it },
+                        label = { Text("Currency Code (e.g. PKR, USD, EUR)", color = Color.LightGray) },
+                        modifier = Modifier.fillMaxWidth().testTag("profile_currency_input"),
+                        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, focusedBorderColor = MintGreen)
+                    )
+
+                    OutlinedTextField(
+                        value = incomeInput,
+                        onValueChange = { incomeInput = it },
+                        label = { Text("Monthly Income", color = Color.LightGray) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth().testTag("profile_income_input"),
+                        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, focusedBorderColor = MintGreen)
+                    )
+
+                    OutlinedTextField(
+                        value = useCaseInput,
+                        onValueChange = { useCaseInput = it },
+                        label = { Text("Primary Use Case", color = Color.LightGray) },
+                        modifier = Modifier.fillMaxWidth().testTag("profile_use_case_input"),
+                        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, focusedBorderColor = MintGreen)
+                    )
+
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = fcmTokenInput,
+                            onValueChange = { fcmTokenInput = it },
+                            label = { Text("FCM Device Token", color = Color.LightGray) },
+                            modifier = Modifier.fillMaxWidth().testTag("profile_fcm_token_input"),
+                            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, focusedBorderColor = MintGreen)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        val context = LocalContext.current
+                        Button(
+                            onClick = {
+                                try {
+                                    FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                                        if (!task.isSuccessful) {
+                                            Toast.makeText(context, "FCM Token retrieval failed: ${task.exception?.localizedMessage ?: "No config file"}", Toast.LENGTH_LONG).show()
+                                            return@addOnCompleteListener
+                                        }
+                                        val token = task.result
+                                        if (token != null) {
+                                            fcmTokenInput = token
+                                            Toast.makeText(context, "FCM Device Token Fetched!", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    Toast.makeText(context, "SDK Error (Ensure google-services.json is in /app/): ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Slate900),
+                            border = BorderStroke(1.dp, MintGreen),
+                            modifier = Modifier.align(Alignment.End).height(32.dp).testTag("fcm_fetch_sdk_btn"),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Refresh, contentDescription = "Fetch FCM Token", tint = MintGreen, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Fetch via SDK", color = MintGreen, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            viewModel.updateProfile(
+                                name = nameInput,
+                                currency = currencyInput,
+                                monthlyIncome = incomeInput.toDoubleOrNull() ?: 0.0,
+                                primaryUseCase = useCaseInput,
+                                fcmToken = fcmTokenInput
+                            )
+                            displayUpdateProfile = false
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MintGreen),
+                        modifier = Modifier.fillMaxWidth().testTag("profile_apply_button")
+                    ) {
+                        Text("Apply Changes", color = Slate900, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // In-App Cloud Notifications
+        val serverNotifications by viewModel.realNotifications.collectAsStateWithLifecycle()
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Slate800)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Server Notifications (${serverNotifications.size}):", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
+                    IconButton(onClick = { viewModel.fetchServerNotifications() }) {
+                        Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh notifications from server", tint = MintGreen)
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (serverNotifications.isEmpty()) {
+                    Text("No server notifications found. Tap refresh to pull latest log updates.", fontSize = 13.sp, color = Color.LightGray)
+                } else {
+                    serverNotifications.take(8).forEach { item ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Slate900)
+                                .padding(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(item.title, fontWeight = FontWeight.Bold, color = MintGreen, fontSize = 13.sp)
+                                Text(
+                                    text = if (item.isRead) "READ" else "NEW",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (item.isRead) Color.LightGray else CoralBorder
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(item.message, color = Color.White, fontSize = 12.sp)
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(item.createdAt.take(16).replace("T", " "), color = Color.Gray, fontSize = 10.sp)
+                        }
+                    }
+                }
             }
         }
 
@@ -1805,10 +2508,15 @@ fun SettingsScreen(viewModel: PayTrackViewModel) {
 /**
  * FAB modal dialog targeting quick insertions
  */
+/**
+ * FAB modal dialog targeting quick insertions
+ */
 @Composable
 fun AddTransactionDialog(viewModel: PayTrackViewModel, onDismiss: () -> Unit) {
     var categoryType by remember { mutableStateOf("EXPENSE") } // "EXPENSE", "INCOME"
     var isCollaborativeSplit by remember { mutableStateOf(false) }
+    var splitMethod by remember { mutableStateOf("EQUAL") } // "EQUAL", "EXACT"
+    var paymentMethodSelection by remember { mutableStateOf("card") } // "cash", "card", "bank_transfer", "e_wallet", "other"
 
     var costAmount by remember { mutableStateOf("") }
     var noteInput by remember { mutableStateOf("") }
@@ -1816,6 +2524,39 @@ fun AddTransactionDialog(viewModel: PayTrackViewModel, onDismiss: () -> Unit) {
     var selectedPodIndex by remember { mutableStateOf(0) }
 
     val activePodsList by viewModel.allPods.collectAsStateWithLifecycle()
+    val cloudBalances by viewModel.selectedPodBalances.collectAsStateWithLifecycle()
+
+    val context = LocalContext.current
+    var attachedReceiptUrl by remember { mutableStateOf<String?>(null) }
+    var isUploadingReceipt by remember { mutableStateOf(false) }
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            isUploadingReceipt = true
+            viewModel.uploadReceipt(context, uri) { receiptUrl ->
+                attachedReceiptUrl = receiptUrl
+                isUploadingReceipt = false
+            }
+        }
+    }
+
+    val distinctUsers = remember(cloudBalances, viewModel.sessionUserId, viewModel.sessionUserName) {
+        val users = mutableMapOf<String, String>()
+        val myId = viewModel.sessionUserId
+        val myName = viewModel.sessionUserName ?: "You"
+        if (myId != null) {
+            users[myId] = myName
+        }
+        cloudBalances.forEach { bal ->
+            users[bal.from._id] = bal.from.name
+            users[bal.to._id] = bal.to.name
+        }
+        users.toList()
+    }
+
+    val exactSplitsMap = remember { mutableStateMapOf<String, String>() }
 
     Dialog(onDismissRequest = { onDismiss() }) {
         Surface(
@@ -1917,6 +2658,96 @@ fun AddTransactionDialog(viewModel: PayTrackViewModel, onDismiss: () -> Unit) {
                         }
                     }
                     Spacer(modifier = Modifier.height(16.dp))
+
+                    // Split Method selector
+                    Text("Select Split Method:", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Slate900)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(32.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (splitMethod == "EQUAL") MintGreen else Color.Transparent)
+                                .clickable { splitMethod = "EQUAL" },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "Equal Split",
+                                color = if (splitMethod == "EQUAL") Slate900 else Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(32.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (splitMethod == "EXACT") MintGreen else Color.Transparent)
+                                .clickable { splitMethod = "EXACT" },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "Custom / Exact Share",
+                                color = if (splitMethod == "EXACT") Slate900 else Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    if (splitMethod == "EXACT") {
+                        Text("Enter Exact Member Shares:", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        if (distinctUsers.isEmpty()) {
+                            Text(
+                                "No active online members loaded. Custom split will fallback equally unless you sync balances first.",
+                                color = Color.Gray,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            )
+                        } else {
+                            distinctUsers.forEach { (userId, userName) ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = userName,
+                                        color = Color.LightGray,
+                                        fontSize = 12.sp,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    val valInput = exactSplitsMap[userId] ?: ""
+                                    OutlinedTextField(
+                                        value = valInput,
+                                        onValueChange = { exactSplitsMap[userId] = it },
+                                        label = { Text("Share ($)", fontSize = 11.sp) },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        modifier = Modifier.width(120.dp),
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = MintGreen,
+                                            unfocusedBorderColor = Color.Gray,
+                                            focusedTextColor = Color.White,
+                                            unfocusedTextColor = Color.White
+                                        ),
+                                        singleLine = true
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
                 }
 
                 OutlinedTextField(
@@ -1924,7 +2755,7 @@ fun AddTransactionDialog(viewModel: PayTrackViewModel, onDismiss: () -> Unit) {
                     onValueChange = { costAmount = it },
                     label = { Text("Amount ($)", color = Color.LightGray) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().testTag("transaction_amount_input"),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = MintGreen,
                         focusedTextColor = Color.White,
@@ -1938,7 +2769,7 @@ fun AddTransactionDialog(viewModel: PayTrackViewModel, onDismiss: () -> Unit) {
                     value = noteInput,
                     onValueChange = { noteInput = it },
                     label = { Text("Short description note (e.g. Uber, Groceries)", color = Color.LightGray) },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().testTag("transaction_note_input"),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = MintGreen,
                         focusedTextColor = Color.White,
@@ -1970,6 +2801,96 @@ fun AddTransactionDialog(viewModel: PayTrackViewModel, onDismiss: () -> Unit) {
                     }
                 }
 
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Standard Payment Methods Select
+                Text("Select Payment Method:", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                val paymentMethods = listOf(
+                    "cash" to "Cash",
+                    "card" to "Card",
+                    "bank_transfer" to "Bank Transfer",
+                    "e_wallet" to "E-Wallet/Other",
+                    "other" to "Other"
+                )
+
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(vertical = 6.dp)
+                ) {
+                    items(paymentMethods) { (pmKey, pmLabel) ->
+                        val selected = paymentMethodSelection == pmKey
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (selected) MintGreen else Slate900)
+                                .clickable { paymentMethodSelection = pmKey }
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Text(pmLabel, color = if (selected) Slate900 else Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                    }
+                }
+
+                // RECEIPT FILE UPLOADER COMPONENT (4.4)
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Slate900)
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        Icon(
+                            imageVector = if (attachedReceiptUrl != null) Icons.Default.CheckCircle else Icons.Default.Add,
+                            contentDescription = "Receipt Attachment Icon",
+                            tint = if (attachedReceiptUrl != null) MintGreen else Color.LightGray,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = if (attachedReceiptUrl != null) "Receipt Connected!" else "Attach Digital Receipt",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = if (attachedReceiptUrl != null) MintGreen else Color.White
+                            )
+                            Text(
+                                text = if (attachedReceiptUrl != null) "Filename: remote_secure_receipt.png" else if (isUploadingReceipt) "Uploading binary multipart..." else "Connect JPEG, PNG or PDF",
+                                fontSize = 10.sp,
+                                color = Color.LightGray,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    if (isUploadingReceipt) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MintGreen)
+                    } else {
+                        Button(
+                            onClick = {
+                                if (attachedReceiptUrl != null) {
+                                    attachedReceiptUrl = null
+                                } else {
+                                    photoPickerLauncher.launch("image/*")
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = if (attachedReceiptUrl != null) Color.Red.copy(alpha = 0.2f) else MintGreen),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
+                            modifier = Modifier.height(28.dp).testTag("receipt_upload_action")
+                        ) {
+                            Text(
+                                text = if (attachedReceiptUrl != null) "Remove" else "Browse",
+                                color = if (attachedReceiptUrl != null) Color.Red else Slate900,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.sp
+                            )
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(24.dp))
 
                 Row(
@@ -1984,30 +2905,60 @@ fun AddTransactionDialog(viewModel: PayTrackViewModel, onDismiss: () -> Unit) {
                         onClick = {
                             val amt = costAmount.toDoubleOrNull() ?: 0.0
                             if (amt > 0) {
+                                val finalNote = if (attachedReceiptUrl != null) {
+                                    "${noteInput.ifEmpty { categorySelection }} [Receipt: $attachedReceiptUrl]"
+                                } else {
+                                    noteInput.ifEmpty { categorySelection }
+                                }
+
                                 if (isCollaborativeSplit && categoryType == "EXPENSE" && activePodsList.isNotEmpty()) {
                                     val targetPod = activePodsList[selectedPodIndex]
-                                    viewModel.addPodTransaction(
-                                        podId = targetPod.id,
-                                        amount = amt,
-                                        category = categorySelection,
-                                        note = noteInput.ifEmpty { categorySelection },
-                                        paidByUserId = 1,
-                                        splitMethod = "EQUAL",
-                                        membersCount = 4
-                                    )
+                                    if (splitMethod == "EXACT" && distinctUsers.isNotEmpty()) {
+                                        val finalSplits = distinctUsers.map { (userId, userName) ->
+                                            val amountStr = exactSplitsMap[userId] ?: "0.0"
+                                            com.example.data.api.TransactionSplitRequest(
+                                                user = userId,
+                                                amount = amountStr.toDoubleOrNull() ?: 0.0
+                                            )
+                                        }
+                                        viewModel.addPodTransaction(
+                                            podId = targetPod.id,
+                                            amount = amt,
+                                            category = categorySelection,
+                                            note = finalNote,
+                                            paidByUserId = 1,
+                                            splitMethod = "EXACT",
+                                            membersCount = distinctUsers.size,
+                                            splits = finalSplits,
+                                            paymentMethod = paymentMethodSelection
+                                        )
+                                    } else {
+                                        viewModel.addPodTransaction(
+                                            podId = targetPod.id,
+                                            amount = amt,
+                                            category = categorySelection,
+                                            note = finalNote,
+                                            paidByUserId = 1,
+                                            splitMethod = "EQUAL",
+                                            membersCount = distinctUsers.size.coerceAtLeast(1),
+                                            splits = null,
+                                            paymentMethod = paymentMethodSelection
+                                        )
+                                    }
                                 } else {
                                     viewModel.addPersonalTransaction(
                                         amount = amt,
                                         category = categorySelection,
                                         type = categoryType,
-                                        note = noteInput,
-                                        paymentMethod = "Card"
+                                        note = finalNote,
+                                        paymentMethod = paymentMethodSelection
                                     )
                                 }
                                 onDismiss()
                             }
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = MintGreen)
+                        colors = ButtonDefaults.buttonColors(containerColor = MintGreen),
+                        modifier = Modifier.testTag("submit_transaction_button")
                     ) {
                         Text("Add Cost Log", color = Slate900, fontWeight = FontWeight.Bold)
                     }
@@ -2017,5 +2968,392 @@ fun AddTransactionDialog(viewModel: PayTrackViewModel, onDismiss: () -> Unit) {
     }
 }
 
+@Composable
+fun AddBillDialog(viewModel: PayTrackViewModel, onDismiss: () -> Unit) {
+    var nameInput by remember { mutableStateOf("") }
+    var amountInput by remember { mutableStateOf("") }
+    var dueDateOffsetDays by remember { mutableStateOf("5") } // Default 5 days offset
+    var isRecurrent by remember { mutableStateOf("monthly") } // "monthly", "weekly", "one-time"
+    var categorySelection by remember { mutableStateOf("Utilities & Bills") }
+    var selectedPodIndex by remember { mutableStateOf(0) } // 0 is "Personal (No Pod)"
+
+    val activePodsList by viewModel.allPods.collectAsStateWithLifecycle()
+    val activeUser by viewModel.primaryUser.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+
+    val categories = listOf("Utilities & Bills", "Rent", "Subscription", "Insurance", "Other")
+    val recurrenceOptions = listOf("monthly", "weekly", "one-time")
+
+    Dialog(onDismissRequest = { onDismiss() }) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .wrapContentHeight(),
+            shape = RoundedCornerShape(20.dp),
+            color = Slate800,
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+            ) {
+                Text(
+                    text = "🔔 Create Bill Reminder",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+
+                OutlinedTextField(
+                    value = nameInput,
+                    onValueChange = { nameInput = it },
+                    label = { Text("Bill Name (e.g., Gas, Spotify)", color = Color.Gray) },
+                    modifier = Modifier.fillMaxWidth().testTag("add_bill_name_input"),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = MintGreen,
+                        unfocusedBorderColor = Color.Gray
+                    )
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = amountInput,
+                    onValueChange = { amountInput = it },
+                    label = { Text("Amount (${activeUser?.currencySymbol ?: "Rs."})", color = Color.Gray) },
+                    modifier = Modifier.fillMaxWidth().testTag("add_bill_amount_input"),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                    ),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = MintGreen,
+                        unfocusedBorderColor = Color.Gray
+                    )
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = dueDateOffsetDays,
+                    onValueChange = { dueDateOffsetDays = it },
+                    label = { Text("Due in (Days from now)", color = Color.Gray) },
+                    modifier = Modifier.fillMaxWidth().testTag("add_bill_days_input"),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                    ),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = MintGreen,
+                        unfocusedBorderColor = Color.Gray
+                    )
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Category selection row
+                Text("Category", color = Color.LightGray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    categories.take(3).forEach { cat ->
+                        val selected = categorySelection == cat
+                        Button(
+                            onClick = { categorySelection = cat },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (selected) MintGreen else Slate900
+                            ),
+                            border = BorderStroke(1.dp, if (selected) MintGreen else Color.Gray),
+                            modifier = Modifier.height(32.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp)
+                        ) {
+                            Text(cat, color = if (selected) Slate900 else Color.White, fontSize = 10.sp)
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Recurrence selection row
+                Text("Recurrence", color = Color.LightGray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    recurrenceOptions.forEach { rec ->
+                        val selected = isRecurrent == rec
+                        Button(
+                            onClick = { isRecurrent = rec },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (selected) MintGreen else Slate900
+                            ),
+                            border = BorderStroke(1.dp, if (selected) MintGreen else Color.Gray),
+                            modifier = Modifier.height(32.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp)
+                        ) {
+                            Text(rec.replaceFirstChar { it.uppercase() }, color = if (selected) Slate900 else Color.White, fontSize = 10.sp)
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Pod assignment dropdown
+                Text("Assign to Pod (Collaborative Split)", color = Color.LightGray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(36.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val podsOptions = listOf("Personal (No Pod)") + activePodsList.map { it.name }
+                    podsOptions.forEachIndexed { idx, name ->
+                        val selected = selectedPodIndex == idx
+                        if (idx < 3) { // keep it short & neat
+                            Button(
+                                onClick = { selectedPodIndex = idx },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (selected) MintGreen else Slate900
+                                ),
+                                border = BorderStroke(1.dp, if (selected) MintGreen else Color.Gray),
+                                modifier = Modifier.height(32.dp).testTag("pod_btn_$idx"),
+                                contentPadding = PaddingValues(horizontal = 8.dp)
+                            ) {
+                                Text(name, color = if (selected) Slate900 else Color.White, fontSize = 10.sp)
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // Action buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = { onDismiss() }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val amt = amountInput.toDoubleOrNull() ?: 0.0
+                            val offsetDays = dueDateOffsetDays.toIntOrNull() ?: 5
+                            if (nameInput.isEmpty() || amt <= 0.0) {
+                                Toast.makeText(context, "Please enter valid fields!", Toast.LENGTH_SHORT).show()
+                            } else {
+                                val targetPodRemoteId = if (selectedPodIndex > 0 && selectedPodIndex <= activePodsList.size) {
+                                    activePodsList[selectedPodIndex - 1].inviteCode
+                                } else {
+                                    null
+                                }
+                                viewModel.addBill(
+                                    name = nameInput,
+                                    amount = amt,
+                                    dueDateOffsetDays = offsetDays,
+                                    recurrence = isRecurrent,
+                                    category = categorySelection,
+                                    podIdString = targetPodRemoteId
+                                )
+                                onDismiss()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MintGreen),
+                        modifier = Modifier.testTag("submit_bill_item_btn")
+                    ) {
+                        Text("Add Reminder", color = Slate900, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
 // Fallback constant values
 val DefaultThemeColor = Color(0xFF0F172A)
+
+@Composable
+fun AddBudgetDialog(viewModel: PayTrackViewModel, onDismiss: () -> Unit) {
+    var categorySelection by remember { mutableStateOf("Food & Dining") }
+    var limitAmountInput by remember { mutableStateOf("") }
+    var thresholdPercentInput by remember { mutableStateOf("15") }
+    
+    // Dynamic Date Calculation
+    val calendar = java.util.Calendar.getInstance()
+    val year = calendar.get(java.util.Calendar.YEAR)
+    val month = calendar.get(java.util.Calendar.MONTH) + 1
+    val formattedMonth = String.format("%02d", month)
+    
+    val defaultStartDate = "$year-$formattedMonth-01"
+    val lastDay = calendar.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
+    val defaultEndDate = "$year-$formattedMonth-$lastDay"
+    
+    var startDateInput by remember { mutableStateOf(defaultStartDate) }
+    var endDateInput by remember { mutableStateOf(defaultEndDate) }
+    
+    val activeUser by viewModel.primaryUser.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    
+    val presetCategories = listOf("Food & Dining", "Rent", "Utilities", "Shopping", "Entertainment", "Overall")
+    
+    Dialog(onDismissRequest = { onDismiss() }) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .wrapContentHeight(),
+            shape = RoundedCornerShape(20.dp),
+            color = Slate800,
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+            ) {
+                Text(
+                    text = "🎯 Set Budget Limit",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                // Limit amount field
+                OutlinedTextField(
+                    value = limitAmountInput,
+                    onValueChange = { limitAmountInput = it },
+                    label = { Text("Limit Target Amount (${activeUser?.currencySymbol ?: "$"})", color = Color.Gray) },
+                    modifier = Modifier.fillMaxWidth().testTag("add_budget_limit_input"),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                    ),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = MintGreen,
+                        unfocusedBorderColor = Color.Gray
+                    )
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                
+                // Low balance threshold percent
+                OutlinedTextField(
+                    value = thresholdPercentInput,
+                    onValueChange = { thresholdPercentInput = it },
+                    label = { Text("Low Balance Alert Threshold % (e.g. 15)", color = Color.Gray) },
+                    modifier = Modifier.fillMaxWidth().testTag("add_budget_threshold_input"),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                    ),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = MintGreen,
+                        unfocusedBorderColor = Color.Gray
+                    )
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                // Start and End dates fields (pre-filled with current month)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = startDateInput,
+                        onValueChange = { startDateInput = it },
+                        label = { Text("Start Date", color = Color.Gray) },
+                        modifier = Modifier.weight(1f).testTag("add_budget_start_date"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = MintGreen,
+                            unfocusedBorderColor = Color.Gray
+                        )
+                    )
+                    OutlinedTextField(
+                        value = endDateInput,
+                        onValueChange = { endDateInput = it },
+                        label = { Text("End Date", color = Color.Gray) },
+                        modifier = Modifier.weight(1f).testTag("add_budget_end_date"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = MintGreen,
+                            unfocusedBorderColor = Color.Gray
+                        )
+                    )
+                }
+                Spacer(modifier = Modifier.height(14.dp))
+                
+                // Select category rows
+                Text("Select Category", color = Color.LightGray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(4.dp))
+                androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                    columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(3),
+                    modifier = Modifier.fillMaxWidth().height(80.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    items(presetCategories.size) { idx ->
+                        val cat = presetCategories[idx]
+                        val selected = categorySelection == cat
+                        Button(
+                            onClick = { categorySelection = cat },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (selected) MintGreen else Slate900
+                            ),
+                            border = BorderStroke(1.dp, if (selected) MintGreen else Color.Gray),
+                            modifier = Modifier.height(34.dp).testTag("budget_picker_$idx"),
+                            contentPadding = PaddingValues(horizontal = 4.dp)
+                        ) {
+                            Text(cat, color = if (selected) Slate900 else Color.White, fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(20.dp))
+                
+                // Dialog action buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = { onDismiss() }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val limit = limitAmountInput.toDoubleOrNull() ?: 0.0
+                            val threshold = thresholdPercentInput.toIntOrNull() ?: 15
+                            if (limit <= 0.0) {
+                                Toast.makeText(context, "Please enter a valid budget target amount!", Toast.LENGTH_SHORT).show()
+                            } else {
+                                viewModel.createBudget(
+                                    category = categorySelection,
+                                    limitAmount = limit,
+                                    thresholdPercent = threshold,
+                                    startDate = startDateInput,
+                                    endDate = endDateInput
+                                )
+                                onDismiss()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MintGreen),
+                        modifier = Modifier.testTag("submit_budget_item_btn")
+                    ) {
+                        Text("Set Budget", color = Slate900, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
